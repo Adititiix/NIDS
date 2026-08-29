@@ -1,0 +1,37 @@
+# Phase 1 scope: PostgreSQL only, for local backend development against a real DB.
+#
+# Packet capture is intentionally NOT containerized in this project's default
+# setup: raw packet capture inside Docker requires --net=host and elevated
+# capabilities, which adds complexity without benefit in a VM-based lab where
+# the sensor already has direct access to its own NIC. Given you're running a
+# VirtualBox/VMware lab, the recommended topology (documented in
+# docs/architecture.md) is:
+#
+#   VM A (traffic-generator) -- isolated internal/host-only network -->
+#   VM B (sensor: backend + capture, this docker-compose's `postgres` can
+#         also run here, or on a separate VM C alongside the dashboard)
+#
+# Backend and frontend service definitions are added in Phase 16 once their
+# Dockerfiles exist in docker/.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nids-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nids
+      POSTGRES_PASSWORD: nids
+      POSTGRES_DB: nids
+    ports:
+      - "5432:5432"
+    volumes:
+      - nids_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nids"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  nids_pg_data:

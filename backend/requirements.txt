@@ -1,0 +1,26 @@
+# --- Phase 1: core API + config ---
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.2
+pydantic-settings==2.5.2
+
+# --- Testing (Phase 1 onward) ---
+pytest==8.3.3
+httpx==0.27.2
+
+# --- Phase 2: packet capture ---
+scapy==2.6.1
+
+# --- Added in later phases (kept here with a comment for traceability) ---
+# sqlalchemy==2.0.35        # Phase 10: database
+# psycopg[binary]==3.2.3    # Phase 10: PostgreSQL driver
+# alembic==1.13.3           # Phase 10: migrations
+# numpy==2.1.2              # Phase 6-7: ML pipeline
+# pandas==2.2.3             # Phase 6-7: ML pipeline
+# scikit-learn==1.5.2       # Phase 7: ML models
+# joblib==1.4.2             # Phase 7: model serialization
+# xgboost==2.1.1            # Phase 7: optional model
+# matplotlib==3.9.2         # Phase 15: evaluation plots
+# seaborn==0.13.2           # Phase 15: evaluation plots
+# psutil==6.0.0             # Phase 15: CPU/RAM measurement
+# websockets==13.1          # Phase 12: WebSocket streaming

@@ -1,0 +1,28 @@
+# Secrets / local config
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+
+# ML artifacts (large / regenerable — not committed)
+ml/data/*.csv
+ml/data/*.pcap
+ml/models/*.joblib
+ml/models/feature_schema.json
+
+# Experiment outputs
+experiments/results/*.csv
+experiments/results/*.json
+experiments/results/*.png
+
+# OS
+.DS_Store
