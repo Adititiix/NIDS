@@ -1,10 +1,10 @@
 """
 FastAPI application entrypoint.
 
-Phase 1 scope: app bootstrapping, structured logging setup, and a health
-check only. Routers for /api/flows, /api/alerts, /api/stats, /api/config,
-and the /ws/alerts + /ws/metrics WebSocket endpoints are added in
-Phases 11-12 once their underlying components exist.
+Phase 1 scope was app bootstrapping, structured logging, and a health
+check only. Phase 10 adds the REST API routers (/api/flows, /api/alerts,
+/api/stats, /api/status) and the /ws/alerts WebSocket endpoint. The
+original /api/health liveness check below is unchanged from Phase 1.
 """
 
 from __future__ import annotations
@@ -16,7 +16,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes import alerts, flows, stats, system
 from app.config import settings
+from app.websocket import routes as websocket_routes
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level),
@@ -48,6 +50,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+app.include_router(system.router)
+app.include_router(flows.router)
+app.include_router(alerts.router)
+app.include_router(stats.router)
+app.include_router(websocket_routes.router)
 
 
 @app.get("/api/health", tags=["system"])

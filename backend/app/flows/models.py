@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from app.capture.models import PacketMetadata, TransportProtocol
+from app.common.stats import RunningStats
 
 
 def _endpoint_sort_key(ip: str, port: int | None) -> tuple[str, int]:
@@ -85,6 +86,50 @@ class FinalizedFlow:
     forward_byte_count: int
     backward_byte_count: int
 
+    # --- Added for Phase 4 feature extraction. All are additive: nothing
+    # above this line changed meaning or position. See docs/methodology.md
+    # for why the aggregate counters above aren't sufficient on their own
+    # (e.g. packet_length_mean IS derivable from byte_count/packet_count,
+    # but std/min/max are not, and IAT/flag data didn't exist here at all).
+
+    # Packet-length distribution, in bytes. "packet_length_*" is computed
+    # over ALL packets in the flow; "forward_packet_length_*" and
+    # "backward_packet_length_*" are the same distribution split by
+    # direction, matching CICFlowMeter's convention of providing both.
+    packet_length_mean: float = 0.0
+    packet_length_std: float = 0.0
+    packet_length_min: float = 0.0
+    packet_length_max: float = 0.0
+    forward_packet_length_mean: float = 0.0
+    forward_packet_length_std: float = 0.0
+    forward_packet_length_min: float = 0.0
+    forward_packet_length_max: float = 0.0
+    backward_packet_length_mean: float = 0.0
+    backward_packet_length_std: float = 0.0
+    backward_packet_length_min: float = 0.0
+    backward_packet_length_max: float = 0.0
+
+    # Inter-arrival time (seconds) between consecutive packets. "flow_iat_*"
+    # considers every packet regardless of direction; "forward_iat_*" and
+    # "backward_iat_*" only consider gaps between consecutive packets in
+    # that same direction.
+    flow_iat_mean: float = 0.0
+    flow_iat_std: float = 0.0
+    flow_iat_min: float = 0.0
+    flow_iat_max: float = 0.0
+    forward_iat_mean: float = 0.0
+    forward_iat_std: float = 0.0
+    backward_iat_mean: float = 0.0
+    backward_iat_std: float = 0.0
+
+    # TCP flag counts across the whole flow. Always 0 for non-TCP flows.
+    syn_count: int = 0
+    ack_count: int = 0
+    fin_count: int = 0
+    rst_count: int = 0
+    psh_count: int = 0
+    urg_count: int = 0
+
     @property
     def duration_seconds(self) -> float:
         return max(self.last_seen - self.first_seen, 0.0)
@@ -116,6 +161,25 @@ class Flow:
     forward_byte_count: int = 0
     backward_byte_count: int = 0
 
+    # --- Added for Phase 4. Streaming accumulators only (see RunningStats
+    # docstring for why raw samples aren't retained) plus small bookkeeping
+    # fields to compute inter-arrival times without storing timestamps.
+    length_stats: RunningStats = field(default_factory=RunningStats)
+    forward_length_stats: RunningStats = field(default_factory=RunningStats)
+    backward_length_stats: RunningStats = field(default_factory=RunningStats)
+    flow_iat_stats: RunningStats = field(default_factory=RunningStats)
+    forward_iat_stats: RunningStats = field(default_factory=RunningStats)
+    backward_iat_stats: RunningStats = field(default_factory=RunningStats)
+    syn_count: int = 0
+    ack_count: int = 0
+    fin_count: int = 0
+    rst_count: int = 0
+    psh_count: int = 0
+    urg_count: int = 0
+    _prev_timestamp: float | None = field(default=None, repr=False)
+    _prev_forward_timestamp: float | None = field(default=None, repr=False)
+    _prev_backward_timestamp: float | None = field(default=None, repr=False)
+
     @classmethod
     def start(cls, pkt: PacketMetadata) -> Flow:
         """Create a new flow from the packet that first establishes it."""
@@ -146,12 +210,48 @@ class Flow:
         self.byte_count += pkt.length
         self.last_seen = max(self.last_seen, pkt.timestamp)
 
+        self.length_stats.add(float(pkt.length))
+
+        # Inter-arrival time, overall. Clamped to 0.0 rather than allowed to
+        # go negative on an out-of-order arrival (see the Phase 3 note in
+        # docs/methodology.md on last_seen using max() for the same reason) --
+        # this is a documented limitation, not silently ignored.
+        if self._prev_timestamp is not None:
+            flow_iat = pkt.timestamp - self._prev_timestamp
+            self.flow_iat_stats.add(max(flow_iat, 0.0))
+        self._prev_timestamp = pkt.timestamp
+
         if self.is_forward(pkt):
             self.forward_packet_count += 1
             self.forward_byte_count += pkt.length
+            self.forward_length_stats.add(float(pkt.length))
+            if self._prev_forward_timestamp is not None:
+                fwd_iat = pkt.timestamp - self._prev_forward_timestamp
+                self.forward_iat_stats.add(max(fwd_iat, 0.0))
+            self._prev_forward_timestamp = pkt.timestamp
         else:
             self.backward_packet_count += 1
             self.backward_byte_count += pkt.length
+            self.backward_length_stats.add(float(pkt.length))
+            if self._prev_backward_timestamp is not None:
+                bwd_iat = pkt.timestamp - self._prev_backward_timestamp
+                self.backward_iat_stats.add(max(bwd_iat, 0.0))
+            self._prev_backward_timestamp = pkt.timestamp
+
+        if pkt.protocol == TransportProtocol.TCP and pkt.tcp_flags:
+            flags = pkt.tcp_flags
+            if "S" in flags:
+                self.syn_count += 1
+            if "A" in flags:
+                self.ack_count += 1
+            if "F" in flags:
+                self.fin_count += 1
+            if "R" in flags:
+                self.rst_count += 1
+            if "P" in flags:
+                self.psh_count += 1
+            if "U" in flags:
+                self.urg_count += 1
 
     def is_idle(self, now: float, timeout_seconds: float) -> bool:
         return (now - self.last_seen) >= timeout_seconds
@@ -172,6 +272,32 @@ class Flow:
             backward_packet_count=self.backward_packet_count,
             forward_byte_count=self.forward_byte_count,
             backward_byte_count=self.backward_byte_count,
+            packet_length_mean=self.length_stats.mean,
+            packet_length_std=self.length_stats.std,
+            packet_length_min=self.length_stats.min,
+            packet_length_max=self.length_stats.max,
+            forward_packet_length_mean=self.forward_length_stats.mean,
+            forward_packet_length_std=self.forward_length_stats.std,
+            forward_packet_length_min=self.forward_length_stats.min,
+            forward_packet_length_max=self.forward_length_stats.max,
+            backward_packet_length_mean=self.backward_length_stats.mean,
+            backward_packet_length_std=self.backward_length_stats.std,
+            backward_packet_length_min=self.backward_length_stats.min,
+            backward_packet_length_max=self.backward_length_stats.max,
+            flow_iat_mean=self.flow_iat_stats.mean,
+            flow_iat_std=self.flow_iat_stats.std,
+            flow_iat_min=self.flow_iat_stats.min,
+            flow_iat_max=self.flow_iat_stats.max,
+            forward_iat_mean=self.forward_iat_stats.mean,
+            forward_iat_std=self.forward_iat_stats.std,
+            backward_iat_mean=self.backward_iat_stats.mean,
+            backward_iat_std=self.backward_iat_stats.std,
+            syn_count=self.syn_count,
+            ack_count=self.ack_count,
+            fin_count=self.fin_count,
+            rst_count=self.rst_count,
+            psh_count=self.psh_count,
+            urg_count=self.urg_count,
         )
 
 

@@ -54,14 +54,27 @@ def test_resolve_interface_raises_when_nothing_usable(monkeypatch: pytest.Monkey
         pc.resolve_interface("eth0")
 
 
-def test_detect_default_interface_uses_conf_iface(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeConf:
+def test_detect_default_interface_uses_conf_iface(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    detect_default_interface() should return whatever `conf.iface` currently
+    holds, as-is, without needing a real interface behind it.
+
+    We can't assign a hardcoded string (e.g. "eth0") directly to Scapy's
+    real `conf.iface` here: it's backed by a descriptor that performs actual
+    OS-level interface resolution on assignment, and platforms without an
+    interface by that name (e.g. Windows) raise instead of just storing the
+    string. So instead of setting an attribute on the real `conf` singleton,
+    we swap out the module-level `conf` name that `detect_default_interface`
+    reads from for a minimal stand-in exposing a plain, unvalidated `.iface`
+    attribute -- this stays portable across Windows/Linux/macOS and still
+    verifies the exact behavior under test: that the function trusts and
+    returns `conf.iface` when it's set.
+    """
+
+    class _FakeConf:
         iface = "fake-default-iface"
 
-    monkeypatch.setattr(pc, "conf", FakeConf)
-
+    monkeypatch.setattr(pc, "conf", _FakeConf())
     assert pc.detect_default_interface() == "fake-default-iface"
 
 

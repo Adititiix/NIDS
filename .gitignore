@@ -19,6 +19,10 @@ ml/data/*.pcap
 ml/models/*.joblib
 ml/models/feature_schema.json
 
+# NIDS backend ML datasets and generated models
+backend/app/ml/data/
+backend/app/ml/models/
+
 # Experiment outputs
 experiments/results/*.csv
 experiments/results/*.json
